@@ -47,10 +47,13 @@ try:
         if xt.last_signal!=None:
             if ((datetime.datetime.now()-xt.last_signal).total_seconds())>60:
                 
-                xt.close_session(session_dead=True)
-		sclient.unsubscribeCandle(xt.instrument)
-            	sclient.unsubscribeAlive()
-            	client.disconnect()
+                sclient.unsubscribeCandle(xt.instrument)
+		sclient.unsubscribeAlive()
+		xt.close_session()
+		client.disconnect()
+                os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
+
+            break
             	print(f'Session terminated due to not responding API last keep alive signal -{xt.last_signal}')
             	os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
             	
@@ -58,10 +61,10 @@ try:
                 
         #if current duration of session is longer than duration defined in xt session is finished, logs are saved in file on the disk        
         if session_lasting >= datetime.timedelta(hours=xt.duration).total_seconds():
-           
-            xt.close_session()
+            
             sclient.unsubscribeCandle(xt.instrument)
             sclient.unsubscribeAlive()
+            xt.close_session()
             client.disconnect()
             os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
 
@@ -71,9 +74,11 @@ try:
 # if session is closed by press CTRL+C, behaviour is the same like in finished session
 except KeyboardInterrupt:
 
-     xt.close_session()
-     sclient.unsubscribeCandle(xt.instrument)
-     sclient.unsubscribeAlive()
-     client.disconnect()
-     os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
+    sclient.unsubscribeCandle(xt.instrument)
+            sclient.unsubscribeAlive()
+            xt.close_session()
+            client.disconnect()
+            os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
+
+            break
 
