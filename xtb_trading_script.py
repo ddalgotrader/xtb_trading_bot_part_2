@@ -12,7 +12,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
 xt = XtbTrader(instrument='EURUSD', interval='1min', lookback=1000, strategy=contrarian,
-               units=0.1, duration=0.1, csv_results_path='/home/slawomir/PycharmProjects/XtbTrader/results')
+               units=0.1, duration=2, csv_results_path='gs://trading-bot-xtb-bucket')
 
 client = APIClient()
 resp = client.execute(loginCommand(user_id, pwd))
@@ -33,8 +33,7 @@ try:
             client.commandExecute('ping')
             sclient.execute(dict(command='ping', streamSessionId=ssid))
 
-        if int(session_lasting)>=15:
-            sclient.unsubscribeAlive()
+       
 
         if xt.last_signal!=None:
             if ((datetime.datetime.now()-xt.last_signal).total_seconds())>60:
@@ -46,7 +45,9 @@ try:
             sclient.unsubscribeCandle('EURUSD')
             sclient.unsubscribeAlive()
             xt.close_session()
+            
             client.disconnect()
+            os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
 
             break
 
@@ -54,4 +55,5 @@ except KeyboardInterrupt:
 
     xt.close_session()
     client.disconnect()
+    os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
 
