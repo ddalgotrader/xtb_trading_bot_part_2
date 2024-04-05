@@ -48,14 +48,11 @@ try:
             if ((datetime.datetime.now()-xt.last_signal).total_seconds())>60:
                 
                 sclient.unsubscribeCandle(xt.instrument)
-		sclient.unsubscribeAlive()
-		xt.close_session()
-		client.disconnect()
+                sclient.unsubscribeAlive()
+                xt.close_session()
+                client.disconnect()
+                print(f'Session terminated due to not responding API last keep alive signal -{xt.last_signal}')
                 os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
-
-            break
-            	print(f'Session terminated due to not responding API last keep alive signal -{xt.last_signal}')
-            	os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
             	
                 break
                 
@@ -80,5 +77,4 @@ except KeyboardInterrupt:
     client.disconnect()
     os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
 
-    break
 
