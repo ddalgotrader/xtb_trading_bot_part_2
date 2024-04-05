@@ -28,7 +28,7 @@ sclient = APIStreamClient(ssId=ssid, candleFun=xt.procCandle, aliveFun=xt.collec
 sclient.subscribeAlive()
 
 #stream of candles every 1 minute
-sclient.subscribeCandle('EURUSD')
+sclient.subscribeCandle(xt.instrument)
 
 try:
     while True:
@@ -48,7 +48,7 @@ try:
             if ((datetime.datetime.now()-xt.last_signal).total_seconds())>60:
                 
                 xt.close_session(session_dead=True)
-		sclient.unsubscribeCandle('EURUSD')
+		sclient.unsubscribeCandle(xt.instrument)
             	sclient.unsubscribeAlive()
             	client.disconnect()
             	print(f'Session terminated due to not responding API last keep alive signal -{xt.last_signal}')
@@ -60,7 +60,7 @@ try:
         if session_lasting >= datetime.timedelta(hours=xt.duration).total_seconds():
            
             xt.close_session()
-            sclient.unsubscribeCandle('EURUSD')
+            sclient.unsubscribeCandle(xt.instrument)
             sclient.unsubscribeAlive()
             client.disconnect()
             os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
@@ -72,7 +72,7 @@ try:
 except KeyboardInterrupt:
 
      xt.close_session()
-     sclient.unsubscribeCandle('EURUSD')
+     sclient.unsubscribeCandle(xt.instrument)
      sclient.unsubscribeAlive()
      client.disconnect()
      os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
