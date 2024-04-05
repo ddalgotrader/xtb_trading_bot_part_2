@@ -54,9 +54,9 @@ class XtbTrader():
         self.cmd_dict = {0: 'Buy', 1: 'Sell', 2: 'Buy_limit', 3: 'Sell_limit', 4: 'Buy_stop', 5: 'Sell_stop'}
         self.session_started = False
         self.session_start = datetime.datetime.now()
-
-        print(f'Trading session on {self.instrument} with interval of {self.interval} and duration - {datetime.timedelta(hours=self.duration).total_seconds()} seconds, strategy -{self.strategy.__name__}')
-
+	
+        session_end=self.session_start+datetime.timedelta(hours=self.duration)
+        print(f'Trading session on {self.instrument} with interval of {self.interval}, session end - {session_end} , strategy -{self.strategy.__name__}')
 
         self.end_to_file_name = datetime.datetime.now().strftime("%Y%m%d")
         start_session_date = self.session_start.strftime("%a,%d %b, %Y, %H:%M:%S")
