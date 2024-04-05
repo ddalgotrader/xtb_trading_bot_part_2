@@ -75,10 +75,10 @@ try:
 except KeyboardInterrupt:
 
     sclient.unsubscribeCandle(xt.instrument)
-            sclient.unsubscribeAlive()
-            xt.close_session()
-            client.disconnect()
-            os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
+    sclient.unsubscribeAlive()
+    xt.close_session()
+    client.disconnect()
+    os.system(f'tmux capture-pane -pS - > {xt.strategy.__name__}_{xt.instrument}_{xt.interval}_{xt.end_to_file_name}.log')
 
-            break
+    break
 
