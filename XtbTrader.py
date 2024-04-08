@@ -195,9 +195,8 @@ class XtbTrader():
 
     def close_session(self, session_dead=False):
 
-        if session_dead==False:
-            self.close_order()
-            self.getTradeHistory(self.order_hist)
+        self.close_order()
+        self.getTradeHistory(self.order_hist)
         if session_dead==True:
 
             print("API doesn'respond session end")
