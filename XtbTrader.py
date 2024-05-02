@@ -24,7 +24,6 @@ class XtbTrader():
 
         :argument
         *client -> XTB API client
-        *ssid -> stream session id required to start streaming candles
         *instrument -> string - instrument you want to trade on e.g. 'EURUSD'
         *interval -> string - trading interval, {'1min', '5min', '15min', '30min', '1h', '4h', '1D'}
         *lookback -> int - how many candles look back to calculate your strategy indicator e.g. 1000
