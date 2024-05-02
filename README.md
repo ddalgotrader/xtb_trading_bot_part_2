@@ -27,13 +27,15 @@ XtbTrader.py - Python module to automatic algorithmic trading on XTB trading pla
    IMPORTANT EMAIL NOTIFICATIONS!!!
 
    If email_info attribute is set to True you have to define email server specifications in config.py file
-
-  user_id=<XTB API USER ID REAL OR DEMO>
-  pwd=<XTB PASSWORD>
-  sender=<YOUR EMAIL ADDRESS SENDER>
-  receiver=<YOUR EMAIL ADDRESS RECEIVER>
-  port=<EMAIL PORT>
-  server=<EMAIL SERVER>
-  email_pwd=<EMAIL PASSWORD>
+   
+	========================================================================================================
+	:config.py
+	user_id=<XTB API USER ID REAL OR DEMO>
+	pwd=<XTB PASSWORD>
+	sender=<YOUR EMAIL ADDRESS SENDER>
+	receiver=<YOUR EMAIL ADDRESS RECEIVER>
+	port=<EMAIL PORT>
+	server=<EMAIL SERVER>
+	email_pwd=<EMAIL PASSWORD>
 
    
