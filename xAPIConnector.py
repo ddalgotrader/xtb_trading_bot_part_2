@@ -4,6 +4,7 @@ import socket
 import logging
 import time
 import ssl
+import pandas as pd
 from threading import Thread
 
 # set to true on debug environment only
@@ -324,4 +325,5 @@ def procNewsExample(msg):
 
 def procCandleExample(msg):
     print("CANDLE: ", msg)
+
 

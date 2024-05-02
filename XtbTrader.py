@@ -1,16 +1,20 @@
-import re
+
 
 import pandas as pd
+
+import config
 from xAPIConnector import *
 import time
 import datetime
-
-
-
+import smtplib, ssl
+from config import *
+from email.message import EmailMessage
+#import warnings
+#warnings.simplefilter(action='ignore', category=FutureWarning)
 class XtbTrader():
 
-    def __init__(self, instrument, interval, lookback, strategy, units, duration,
-                 csv_results_path, client=None):
+    def __init__(self, instrument, interval, lookback, strategy, units, session_end,
+                 csv_results_path, client=None, email_info=True, close_order_after_session=False):
 
         '''
 
@@ -26,12 +30,16 @@ class XtbTrader():
         *lookback -> int - how many candles look back to calculate your strategy indicator e.g. 1000
         *strategy -> name of defined strategy in python,
         *units -> float number of units of given instrument
-        *duration -> int, session duration in hours
+        *session_end -> SESSION END IN FORMAT'yyyy-mm-dd HH:MM:SS
         *csv_results_path -> str, filepath where store dataframe with price data and trading results
+        *email_info ->boolean, sending email info about trading session events
+        *close_order_after_session -> boolean, order shoul be active after session e.g. for a weekend
 
 
 
         '''
+
+        self.email_info=email_info
         self.last_signal=None
         self.terminate_session=False
         self.instrument = instrument
@@ -39,7 +47,7 @@ class XtbTrader():
         self.lookback = lookback
         self.strategy = strategy
         self.units = units
-        self.duration=duration
+        self.session_end=session_end
         self.csv_results_path = csv_results_path
         self.interval_dict = {'1min': 1, '5min': 5, '15min': 15, '30min': 30, '1h': 60, '4h': 240, '1D': 1440}
         self.collect_live = False
@@ -54,13 +62,29 @@ class XtbTrader():
         self.cmd_dict = {0: 'Buy', 1: 'Sell', 2: 'Buy_limit', 3: 'Sell_limit', 4: 'Buy_stop', 5: 'Sell_stop'}
         self.session_started = False
         self.session_start = datetime.datetime.now()
-	
-        session_end=self.session_start+datetime.timedelta(hours=self.duration)
-        print(f'Trading session on {self.instrument} with interval of {self.interval}, session end - {session_end} , strategy -{self.strategy.__name__}')
 
-        self.end_to_file_name = datetime.datetime.now().strftime("%Y%m%d")
-        start_session_date = self.session_start.strftime("%a,%d %b, %Y, %H:%M:%S")
-        print(f"START SESSION AT {start_session_date} ")
+        self.email_sender=sender
+        self.email_receiver=receiver
+        self.email_port=port
+        self.email_server=server
+        self.email_password=email_pwd
+        self.current_candle=None
+        self.close_order_after_session=close_order_after_session
+        self.not_candle=False
+        self.end_session_date=datetime.datetime.strptime(self.session_end, '%Y-%m-%d %H:%M:%S').strftime("%a,%d %b, %Y, %H:%M:%S")
+
+        self.end_to_file_name = self.session_end.replace('-','').replace(':','').replace(' ','')
+        self.start_to_file_name=self.session_start.strftime("%Y%m%d%H%M%S")
+        self.start_session_date = self.session_start.strftime("%a,%d %b, %Y, %H:%M:%S")
+        self.start_message=(f'Trading session on {self.instrument} with interval of {self.interval}, session end - {self.session_end} , strategy -{self.strategy.__name__}\n'
+                       f'START SESSION AT {self.start_session_date}')
+
+
+        print(self.start_message)
+
+        print(self.start_session_date)
+        print(self.end_session_date)
+
         try:
             with open('valid_xtb_symbols.json') as f:
 
@@ -126,18 +150,23 @@ class XtbTrader():
             }}
 
         data = client.commandExecute('getChartRangeRequest', arguments=args)
+        if data['status'] == False:
+            raise APIResponseException(data, send_email=self.email_info)
 
         df = self.history_converter(data)
 
-        if len(df) != self.lookback:
-            print(
-                f'For {self.interval} interval you can get last {len(df)} candles now, for more info about limitations visit http://developers.xstore.pro/documentation/#getChartRangeRequest')
+
 
         self.raw_data = df.copy()
+        self.raw_data = self.strategy(self.raw_data)
 
         self.last_bar = self.raw_data.index[-1]
 
+
+
     def procCandle(self, msg):
+
+        self.procLive=True
 
         '''
         Description
@@ -156,20 +185,26 @@ class XtbTrader():
 
 
 
+
         record = pd.DataFrame.from_records(msg['data'], index=[pd.to_datetime(datetime.datetime.fromtimestamp(
             msg['data']['ctm'] / 1000))])
         record = record[['open', 'high', 'low', 'close', 'vol']]
         self.last_candle = record.resample('1min', label='right').last().index[-1]
+        
 
         if (self.last_candle - self.last_bar > pd.to_timedelta(self.interval)) & (self.collect_live == False):
-
+            
 
 
 
             self.collect_live = True
-            print('START COLLECTING LIVE DATA')
-            print('Waiting for first trade signal...')
-            print('=================================')
+            collect_data_message='START COLLECTING LIVE DATA\nWaiting for first trade signal...\n=================================.'
+            print(collect_data_message)
+            self.start_message=self.start_message+'\n'+collect_data_message
+
+            if self.email_info == True:
+                self.send_email_info(self.start_message)
+
 
         if self.collect_live == True:
 
@@ -177,12 +212,43 @@ class XtbTrader():
 
                 self.live_df = pd.concat([self.live_df, record])
 
-                if self.last_candle - self.live_df.index[0] == pd.to_timedelta(self.interval):
+                idx_to_check=self.live_df.index[-1]+pd.to_timedelta('1min')
+                if idx_to_check.minute%self.interval_dict[self.interval]==0:
+
+                #if self.last_candle - self.live_df.index[0] == pd.to_timedelta(self.interval):
+
                     self.live_df = self.live_df.resample(self.interval).agg(
                         {"open": "first", "high": "max", "low": "min", "close": "last", "vol": "sum"}).dropna()
                     self.raw_data = pd.concat([self.raw_data, self.live_df])
+                    self.live_df_len_control=len(self.live_df)
                     self.live_df = pd.DataFrame()
                     self.raw_data = self.strategy(self.raw_data)
+                    self.last_bar=self.raw_data.index[-1]
+                    if self.trade_counter == 0:
+
+                        if self.start_order_pos != None:
+
+                            if self.start_order_pos == 0:
+
+                                if self.raw_data['position'].iloc[-1] == 0:
+                                    self.close_order()
+
+                                if self.raw_data['position'].iloc[-1] == -1:
+                                    self.raw_data['position'].iloc[-2] = 1
+
+                            if self.start_order_pos == 1:
+
+                                if self.raw_data['position'].iloc[-1] == 0:
+                                    self.close_order()
+
+                                if self.raw_data['position'].iloc[-1] == 1:
+                                    self.raw_data['position'].iloc[-2] = -1
+
+                        else:
+
+                            if self.raw_data['position'].iloc[-1] != 0:
+                                self.raw_data['position'].iloc[-2] = 0
+
                     self.trade()
 
 
@@ -190,26 +256,71 @@ class XtbTrader():
 
                 self.raw_data = pd.concat([self.raw_data, record])
                 self.raw_data = self.strategy(self.raw_data)
+
+
+                if self.trade_counter == 0:
+
+                    if self.start_order_pos!=None:
+
+                        if self.start_order_pos == 0:
+
+
+                            if self.raw_data['position'].iloc[-1] == 0:
+                                self.close_order()
+
+
+                            if self.raw_data['position'].iloc[-1] == -1:
+                                self.raw_data['position'].iloc[-2] = 1
+
+                        if self.start_order_pos == 1:
+
+
+                            if self.raw_data['position'].iloc[-1] == 0:
+                                self.close_order()
+
+
+                            if self.raw_data['position'].iloc[-1] == 1:
+                                self.raw_data['position'].iloc[-2] = -1
+
+                    else:
+
+                        if self.raw_data['position'].iloc[-1] != 0:
+                            self.raw_data['position'].iloc[-2] = 0
+
+
+
                 self.trade()
+
+
+            if (datetime.datetime.now().hour%4==0)&(datetime.datetime.now().minute == 45):
+                print('procCandle works',self.last_bar)
+
 
 
     def close_session(self, session_dead=False):
 
-        self.close_order()
-        self.getTradeHistory(self.order_hist)
-        if session_dead==True:
 
-            print("API doesn'respond session end")
+        if self.close_order_after_session==True:
+            self.close_order()
+            self.getTradeHistory(self.order_hist)
+
+
+        close_session_message=self.check_end_status()
         end_session = datetime.datetime.now().strftime("%a,%d %b, %Y, %H:%M:%S")
-        print(f'TRADING SESSION END AT {end_session}')
-        self.raw_data.to_csv(
-            f'{self.csv_results_path}/trading_session_{self.instrument}_{self.interval}_{self.end_to_file_name}_{self.strategy.__name__}_strategy.csv')
+        close_session_message=close_session_message+f'\nTRADING SESSION END AT {end_session}\n'
+        if session_dead == True:
+            close_session_message=close_session_message+"API doesn'respond session end\n"
+
+        self.save_history()
         if len(self.session_history) > 0:
-            self.session_hist_df.to_csv(
-                f'{self.csv_results_path}/session_history_{self.instrument}_{self.interval}_{self.end_to_file_name}_{self.strategy.__name__}_strategy.csv')
-            print(f"Profit generated during trading session: {self.session_hist_df['cum_profit'].iloc[-1]}")
-        print(f'Number of trades in session: {self.trade_counter}')
-        print(f'=================================================')
+            close_session_message=close_session_message+f"Profit generated during trading session: {self.session_hist_df['cum_profit'].iloc[-1]}\n"
+
+        close_session_message=close_session_message+f'Number of trades in session: {self.trade_counter}\n=================================================\n'
+        if self.close_order_after_session==False:
+            close_session_message=close_session_message+'Defined not closing order after session check if your order is closed'
+        print(close_session_message)
+        if self.email_info == True:
+            self.send_email_info(close_session_message)
         time.sleep(5)
     def trade(self):
 
@@ -224,32 +335,50 @@ class XtbTrader():
 
         if df['position'].iloc[-2] == 1:
             if df['position'].iloc[-1] == -1:
-
                 self.close_order()
                 self.getTradeHistory(self.order_hist)
+                self.save_history()
+
                 if self.position_closed:
                     self.open_position('sell')
+
+
             if df['position'].iloc[-1] == 0:
                 self.close_order()
                 self.getTradeHistory(self.order_hist)
+                self.save_history()
+
 
         if df['position'].iloc[-2] == -1:
             if df['position'].iloc[-1] == 1:
-
                 self.close_order()
                 self.getTradeHistory(self.order_hist)
+                self.save_history()
+
                 if self.position_closed:
                     self.open_position('buy')
+
+
             if df['position'].iloc[-1] == 0:
                 self.close_order()
+
                 self.getTradeHistory(self.order_hist)
+                self.save_history()
+
 
         if df['position'].iloc[-2] == 0:
             if df['position'].iloc[-1] == 1:
+
+                
                 self.open_position('buy')
 
+
+
             if df['position'].iloc[-1] == -1:
+
                 self.open_position('sell')
+
+
 
     def close_order(self):
         '''
@@ -258,8 +387,9 @@ class XtbTrader():
         Method that close active trading positions
 
         '''
-
         order_to_close = self.client.commandExecute("getTrades", arguments={'openedOnly': True})
+        if order_to_close ['status'] == False:
+            raise APIResponseException(order_to_close, send_email=self.email_info)
 
         if len(order_to_close['returnData']) > 0:
 
@@ -275,7 +405,11 @@ class XtbTrader():
 
             })
 
+            if order_close['status'] == False:
+                raise APIResponseException(order_close, send_email=self.email_info)
+
             self.check_order_closed(order_to_close)
+
 
 
 
@@ -315,6 +449,9 @@ class XtbTrader():
 
         })
 
+        if order['status'] == False:
+            raise APIResponseException(order, send_email=self.email_info)
+
         order_num = order['returnData']['order']
 
         self.check_order(order_num)
@@ -348,6 +485,8 @@ class XtbTrader():
             while True:
                 order_history = self.client.commandExecute("getTradesHistory", arguments={'end': 0, 'start': 0})
                 time.sleep(0.5)
+                if order_history['status'] == False:
+                    raise APIResponseException(order_history, send_email=self.email_info)
 
                 retry += 1
                 if retry > 15:
@@ -358,6 +497,7 @@ class XtbTrader():
                         if order_history['status'] == True:
                             found_hist_order = False
                             for d in order_history['returnData']:
+
                                 if order_num == d['position']:
                                     found_hist_order = True
                                     print(f'Trade {order_num} saved in trades history')
@@ -365,15 +505,20 @@ class XtbTrader():
                                     self.session_history.append(hist_record)
                                     self.session_hist_df = pd.DataFrame.from_dict(self.session_history)
                                     self.session_hist_df['cum_profit'] = self.session_hist_df['profit'].cumsum()
-                                    print(f'Closed trade {order_num} details:')
-                                    print(f"Open price: {hist_record['open_price']}")
-                                    print(f"Close price: {hist_record['close_price']}")
-                                    print(f"Trade profit: {hist_record['profit']}")
+                                    self.close_message=(f"Closed trade {order_num} details:\n"
+                                                     f"Open price: {hist_record['open_price']}\n"
+                                                     f"Close price: {hist_record['close_price']}\n"
+                                                     f"Trade profit: {hist_record['profit']}\n")
+
+
                                     if 'cum_profit' in self.session_hist_df.columns:
-                                        print(
-                                            f"Cumulative profit for whole trading session: {self.session_hist_df['cum_profit'].iloc[-1]}")
-                                    print(f'Number of trades in session: {self.trade_counter}')
-                                    print('=======================================================')
+                                        self.close_message=self.close_message+f"Cumulative profit for whole trading session: {self.session_hist_df['cum_profit'].iloc[-1]}\n"
+
+                                    self.close_message=self.close_message+f'Number of trades in session: {self.trade_counter}\n=======================================================\n'
+
+                                    print(self.close_message)
+                                    if self.email_info == True:
+                                        self.send_email_info(self.close_message)
 
                                     break
 
@@ -402,8 +547,11 @@ class XtbTrader():
         while True:
             trade_details = self.client.commandExecute('getTrades', arguments={"openedOnly": True})
             time.sleep(0.5)
+            if trade_details['status'] == False:
+                raise APIResponseException(trade_details, send_email=self.email_info)
+
             retry += 1
-            if retry > 15:
+            if retry > 10:
                 print(f'Not found order {current_order}')
                 break
 
@@ -417,10 +565,11 @@ class XtbTrader():
                                 trade_position = trade_details['returnData'][-1]['position']
                                 open_time = datetime.datetime.now().strftime("%a,%d %b, %Y, %H:%M:%S")
 
-                                print(
-                                    f'{position} order number {current_order} with position {trade_position} at {open_time} with open price {open_price} accepted')
-                                print(
-                                    '-----------------------------------------------------------------------------------------------------------------')
+                                open_pos_message=(f'{position} order number {current_order} with position {trade_position} at {open_time} with open price {open_price} accepted\n'
+                                                  '-----------------------------------------------------------------------------------------------------------------')
+                                print(open_pos_message)
+                                if self.email_info == True:
+                                    self.send_email_info(open_pos_message)
 
                                 break
                     else:
@@ -443,6 +592,9 @@ class XtbTrader():
 
             check_order = self.client.commandExecute("tradeTransactionStatus", arguments={'order': order_num})
             time.sleep(0.5)
+            if check_order['status'] == False:
+                raise APIResponseException(check_order, send_email=self.email_info)
+
             retry += 1
             if retry > 15:
                 print('Cannot specify transaction status')
@@ -485,8 +637,10 @@ class XtbTrader():
         while True:
             check_order = self.client.commandExecute("getTrades", arguments={'openedOnly': True})
             time.sleep(0.5)
+            if check_order['status'] == False:
+                raise APIResponseException(check_order, send_email=self.email_info)
             retry += 1
-            if retry > 15:
+            if retry > 10:
                 print('Cannot specify if order is closed')
                 break
 
@@ -505,6 +659,75 @@ class XtbTrader():
     def collectAlive(self,msg):
 
         self.last_signal=datetime.datetime.fromtimestamp(int((msg['data']['timestamp'])/1000))
+
+
+    def send_email_info(self, message, subject='Trading session info'):
+
+        try:
+            msg = EmailMessage()
+            msg.set_content(message)
+
+            msg['Subject'] = f'{subject} {self.start_session_date}-{self.end_session_date}'
+            msg['From'] = self.email_sender
+            msg['To'] = self.email_receiver
+            context = ssl.create_default_context()
+            server = smtplib.SMTP_SSL(self.email_server, self.email_port)
+            server.login(self.email_sender, self.email_password)
+            server.send_message(msg)
+            server.quit()
+
+        except smtplib.SMTPException as e:
+
+            print('SMTP Error Occured, email not sent')
+            print(e)
+            pass
+
+    def save_history(self):
+
+        self.raw_data.to_csv(
+            f'{self.csv_results_path}/trading_session_{self.instrument}_{self.interval}_{self.start_to_file_name}_{self.end_to_file_name}_{self.strategy.__name__}_strategy.csv')
+        if len(self.session_history) > 0:
+            self.session_hist_df.to_csv(
+                f'{self.csv_results_path}/session_history_{self.instrument}_{self.interval}_{self.start_to_file_name}_{self.end_to_file_name}_{self.strategy.__name__}_strategy.csv')
+
+    def check_start_status(self,client):
+        self.start_order_pos=None
+        start_order = client.commandExecute("getTrades", arguments={'openedOnly': True})
+        if start_order['status'] == False:
+            raise APIResponseException(start_order, send_email=self.email_info)
+
+        if len(start_order['returnData']) > 0:
+            self.start_order_pos = start_order['returnData'][-1]['cmd']
+            self.start_order_num = start_order['returnData'][-1]['position']
+
+            if self.start_order_pos == 0:
+                order_info = f'There is still active order {self.start_order_num} with long position'
+
+            if self.start_order_pos == 1:
+                order_info = f'There is still active order {self.start_order_num} with short position'
+            self.start_message = self.start_message + '\n' + order_info
+            print(order_info)
+
+    def check_end_status(self):
+
+        end_order = self.client.commandExecute("getTrades", arguments={'openedOnly': True})
+        if end_order['status'] == False:
+            raise APIResponseException(end_order, send_email=self.email_info)
+
+        if len(end_order['returnData']) > 0:
+            end_order_pos = end_order['returnData'][-1]['cmd']
+            end_order_num = end_order['returnData'][-1]['position']
+
+            if end_order_pos == 0:
+                order_info = f'There is still active order {end_order_num} with long position, cum profit is presented without this trade'
+            if end_order_pos == 1:
+                order_info = f'There is still active order {end_order_num} with short position, cum profit is presented without this trade'
+
+
+            return order_info
+
+        else:
+            return 'No active trades'
 
 
 class InvalidInterval(Exception):
@@ -536,4 +759,31 @@ class InvalidSymbol(Exception):
         self.symbol = symbol
         self.message = f"Symbol {self.symbol} is invalid, choose from one of possible instruments:  {self.valid_symbols}"
         super().__init__(self.message)
+
+class APIResponseException(Exception):
+
+    def __init__(self, resp, send_email=True):
+        self.resp=resp
+        self.message=f"error code={self.resp['errorCode']}, error description={self.resp['errorDescr']}"
+        super().__init__(self.message)
+        if send_email==True:
+            try:
+                msg = EmailMessage()
+                msg.set_content(self.message)
+                subject='Trading session API error'
+                msg['Subject'] = f'{subject}'
+                msg['From'] = config.sender
+                msg['To'] = config.receiver
+                context = ssl.create_default_context()
+                server = smtplib.SMTP_SSL(config.server, config.port)
+                server.login(config.sender, config.email_pwd)
+                server.send_message(msg)
+                server.quit()
+            except smtplib.SMTPException as e:
+
+                print('SMTP Error Occured, email not sent')
+                print(e)
+                pass
+
+
 
